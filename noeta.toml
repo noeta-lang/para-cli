@@ -1,5 +1,7 @@
 [package]
 name = "para/cli"
-version = "0.1.1"
+version = "0.1.2"
 # The minimum noeta this package works with; enforced at resolve time from noeta 0.2.1 on.
 toolchain = ">=0.2"
+description = "Command-line apps where the function signature is the spec — parser, help text, and exit codes derived from #[Command] functions."
+keywords = ["cli", "terminal", "commands", "arguments"]
