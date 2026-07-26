@@ -4,7 +4,7 @@
 // runtime (`construct`) — so the function signature stays the spec, and a nested options struct is
 // just another parameter. An omitted field with a default is filled by the struct; a missing required
 // field or a bad value is a usage error (exit 2).
-use para.cli.{Command, run, dispatch}
+use para.cli.{Command, run, dispatch, help_text}
 use std.io
 use std.os
 
@@ -89,5 +89,18 @@ os.exit(run())
     // `--help` still prints usage and exits cleanly (0).
     fn help_exits_clean(): void {
         assert(dispatch(["--help"]) == 0)
+    }
+
+    // Single-command help/parser consistency, struct edition: top-level help is this command's own
+    // usage, showing the FIELD flags the parser accepts — never a `Commands:` section, and never a
+    // `<opts>` positional (struct fields are flags, not positionals).
+    fn help_shows_field_flags(): void {
+        h = help_text()
+        assert(h.starts_with("usage:"))
+        assert(h.contains("--port <port>"))
+        assert(h.contains("[--host <host>]"))
+        assert(h.contains("[--verbose]"))
+        assert(!h.contains("Commands:"))
+        assert(!h.contains("<opts>"))
     }
 }

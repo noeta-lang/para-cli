@@ -7,7 +7,7 @@
 //
 // The tests exploit that a command's `int` return becomes the exit code, so the arithmetic commands
 // are self-verifying with no output to capture: `dispatch(["add","2","3"])` is literally `2 + 3`.
-use para.cli.{Command, Arg, run, dispatch}
+use para.cli.{Command, Arg, run, dispatch, help_text}
 use std.io
 use std.os
 use std.env
@@ -156,6 +156,16 @@ os.exit(run())
     // Empty argv in multi-command mode prints top-level help (0).
     fn empty_argv_is_help(): void {
         assert(dispatch([]) == 0)
+    }
+
+    // Multi-command top-level help lists the commands (and only lists — no usage line), matching the
+    // parser, which expects a subcommand word as the first non-flag token.
+    fn top_help_lists_commands(): void {
+        h = help_text()
+        assert(h.starts_with("Commands:"))
+        assert(h.contains("add"))
+        assert(h.contains("greet"))
+        assert(!h.contains("usage:"))
     }
 
     // Per-command `--help` is a clean exit (0).

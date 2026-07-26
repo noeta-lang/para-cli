@@ -73,16 +73,20 @@ pub fn dispatch(argv: List<string>): int {
         return run_completions(cmds, argv.slice(1, argv.len()))
     }
 
-    // Top-level help: `--help`/`-h` as the first token, or (multi-command) an empty argv.
+    // Top-level help: `--help`/`-h` as the first token, or (multi-command) an empty argv. What it
+    // prints matches how the parser dispatches: multi-command mode lists the commands; single-command
+    // mode renders the lone command's own usage, because a `Commands:` listing would advertise a
+    // subcommand token the parser never expects.
     if argv.len() > 0 && is_help(argv[0]) || !single && argv.len() == 0 {
-        io.outln(top_help_text(cmds))
+        io.outln(help_text())
         return 0
     }
 
     // Select the command and the slice of tokens that belong to it.
     if single {
-        // Single-command mode: no subcommand token — every argv token is this command's argument.
-        return run_command(cmds[0].target, cmds[0].name, argv)
+        // Single-command mode: no subcommand token — every argv token is this command's argument, and
+        // help/usage name the program itself rather than the (never-typed) command name.
+        return run_command(cmds[0].target, program_name(), argv)
     }
     // Multi-command mode: the longest command-name token-prefix of `argv` selects the subcommand.
     return match select_command(cmds, argv) {
@@ -578,6 +582,18 @@ fn unknown_command_message(cmds: List<Cmd>, argv: List<string>): string {
 
 // ---- Help text ------------------------------------------------------------
 
+/// The top-level `--help` text, exactly as `dispatch` prints it — a testable seam. Multi-command
+/// mode lists the commands; single-command mode renders the lone command's own usage and arguments
+/// under the program's name, since its argv carries no subcommand token and there is no command list
+/// to choose from.
+pub fn help_text(): string {
+    cmds = commands()
+    if cmds.len() == 1 {
+        return command_help_text(program_name(), params_of(cmds[0].target))
+    }
+    return top_help_text(cmds)
+}
+
 // Top-level help, grouped hierarchically: commands that share a first name-token (nested paths like
 // `remote add`, `remote remove`) are listed under one group header, and standalone commands appear
 // as flat lines. Section headers are bold on a terminal; command summaries are dimmed.
@@ -648,13 +664,33 @@ fn command_usage_text(name: string, params: List<ParamInfo>): string {
     lead = bold("usage:")
     mut parts: List<string> = ["${lead} ${name}"]
     for p in params {
-        if is_bool_type(p.type) {
-            parts = parts ~ [if p.optional then "[--${p.name}]" else "--${p.name}"]
-        } else {
-            parts = parts ~ [if p.optional then "[${p.name}]" else "<${p.name}>"]
+        match struct_type_name(p.type) {
+            some(sname) => {
+                // A struct-typed parameter (F5) parses as its fields' `--flag`s, never as one
+                // positional — so usage shows the flags the parser actually accepts.
+                for fs in field_specs_of(sname) {
+                    parts = parts ~ [field_usage(fs)]
+                }
+            },
+            none => {
+                if is_bool_type(p.type) {
+                    parts = parts ~ [if p.optional then "[--${p.name}]" else "--${p.name}"]
+                } else {
+                    parts = parts ~ [if p.optional then "[${p.name}]" else "<${p.name}>"]
+                }
+            },
         }
     }
     return parts.join(" ")
+}
+
+// The usage token for one expanded struct field: a bool field is a presence-flag, anything else
+// takes a value; a defaulted field is bracketed as optional.
+fn field_usage(fs: FieldSpec): string {
+    if is_bool_type(fs.type) {
+        return if fs.optional then "[--${fs.name}]" else "--${fs.name}"
+    }
+    return if fs.optional then "[--${fs.name} <${fs.name}>]" else "--${fs.name} <${fs.name}>"
 }
 
 // The full per-command help: the usage line plus one detail line per parameter, showing its type, a
@@ -665,6 +701,21 @@ fn command_help_text(name: string, params: List<ParamInfo>): string {
     if params.len() > 0 {
         lines = lines ~ ["", bold("Arguments:")]
         for p in params {
+            // A struct-typed parameter (F5) binds through its fields' flags, so help details the
+            // flags themselves — the parameter name is never a token the parser accepts.
+            match struct_type_name(p.type) {
+                some(sname) => {
+                    for fs in field_specs_of(sname) {
+                        mut flabel = "  --${fs.name}: ${dim(type_name(fs.type))}"
+                        if fs.optional {
+                            flabel = flabel ~ " " ~ dim("[optional]")
+                        }
+                        lines = lines ~ [flabel]
+                    }
+                    continue
+                },
+                none => {},
+            }
             a = arg_of(p)
             help = match a {
                 some(x) => x.help,

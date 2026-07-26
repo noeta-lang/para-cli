@@ -12,6 +12,7 @@ One pure-Noeta module, `para.cli`:
 | `Arg { help = "", short = "", long = "", env = "" }` | `@attribute(Param)` | per-parameter help, flag spellings, and an environment-variable fallback |
 | `run(): int` | fn | dispatch the real `argv` (minus argv0), return the exit code |
 | `dispatch(argv: List<string>): int` | fn | the testable core: dispatch a synthetic argv |
+| `help_text(): string` | fn | the top-level `--help` text exactly as `dispatch` prints it — a testable seam for asserting on help output |
 
 Plus the framework behavior that rides on those: derived `--help` (colorized on a TTY), nested subcommands, env-var fallbacks, and `--completions <bash|zsh|fish>` shell-completion scripts.
 
@@ -126,7 +127,7 @@ $ myprog --completions fish > ~/.config/fish/completions/myprog.fish
 - **Argument forms.** `--long value`, `--long=value`, `-s value`, `-s=value`; a `bool` parameter is a flag (`--flag` presence, `--flag=false`, or `--no-flag`); `--` ends option parsing; remaining bare tokens fill the non-bool parameters in declaration order. A parameter's long spelling defaults to its name (`#[Arg(long: ...)]` overrides it); it has no short unless `#[Arg(short: ...)]` declares one. Named arguments may come in any order.
 - **Coercion.** `int` via `to_int`, `float` via `to_float`, `bool` via `true`/`1`/`false`/`0`; any other type receives the raw string.
 - **Optional parameters.** A parameter with a default may be omitted; the argument list is left short and the callee fills its own default. Defaults are trailing-only, so once one optional is absent the rest are too.
-- **Help.** `--help`/`-h` as the first token (or an empty argv, in multi-command mode) prints the top-level help; after a command name — anywhere before a `--` — it prints that command's usage. Per-command help lists each parameter with its type and its `(-s)` / `[optional]` / `[env: NAME]` annotations.
+- **Help.** `--help`/`-h` as the first token (or an empty argv, in multi-command mode) prints the top-level help; after a command name — anywhere before a `--` — it prints that command's usage. Top-level help matches how the parser dispatches: multi-command mode lists the commands, while single-command mode prints the lone command's own usage under the program's name — no `Commands:` section, because there is no subcommand token to type. Per-command help lists each parameter with its type and its `(-s)` / `[optional]` / `[env: NAME]` annotations; a struct-typed parameter is shown as its fields' `--flag`s, exactly as the parser accepts them.
 - **Return values.** An `int` return becomes the exit code; any other return value is success (`0`); an `Err` returned by the command is a runtime failure (`1`).
 - **Error output.** Every failure prints `error: <message>` to stderr. A usage error follows it with the command's usage line; a command-selection error follows it with the top-level help.
 - **Exit codes.** `0` success (or `--help`), `1` the command returned an `Err`, `2` a usage error (unknown command/option, missing required argument, bad coercion, too many positionals).

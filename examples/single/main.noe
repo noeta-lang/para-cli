@@ -1,6 +1,6 @@
 // Single-command mode: a program with exactly one `#[Command]` has no subcommand token — every argv
 // token is that command's argument. `para.cli` detects the arity and dispatches straight to it.
-use para.cli.{Command, Arg, run, dispatch}
+use para.cli.{Command, Arg, run, dispatch, help_text}
 use std.io
 use std.os
 use std.env
@@ -48,6 +48,31 @@ os.exit(run())
     // `--help` prints usage and exits cleanly (0).
     fn single_help(): void {
         assert(dispatch(["--help"]) == 0)
+    }
+
+    // ---- Help/parser consistency (single-command mode) -----------------------
+
+    // Top-level help IS the command's own usage/arguments: no `Commands:` section, because the
+    // parser never expects a subcommand token — advertising `say` would suggest a spelling that
+    // parses as the `msg` positional instead.
+    fn single_help_is_command_usage(): void {
+        h = help_text()
+        assert(h.starts_with("usage:"))
+        assert(h.contains("<msg>"))
+        assert(h.contains("[times]"))
+        assert(h.contains("Arguments:"))
+        assert(!h.contains("Commands:"))
+    }
+
+    // Even a token spelling the command's own name is just the first positional — proof there is
+    // no subcommand word in single-command mode (`say` binds `msg = "say"`).
+    fn single_command_name_is_positional(): void {
+        assert(dispatch(["say"]) == 0)
+    }
+
+    // `--help` after a positional still prints this command's usage and exits cleanly.
+    fn single_help_after_positional(): void {
+        assert(dispatch(["hello", "--help"]) == 0)
     }
 
     // ---- F1: env-var fallback (single-command mode) --------------------------
