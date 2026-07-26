@@ -1,5 +1,5 @@
 [package]
 name = "para/cli"
-version = "0.1.0"
+version = "0.1.1"
 # The minimum noeta this package works with; enforced at resolve time from noeta 0.2.1 on.
 toolchain = ">=0.2"
