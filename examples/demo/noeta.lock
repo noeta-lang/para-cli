@@ -3,8 +3,8 @@ version = 2
 
 [[package]]
 name = "para/cli"
-version = "0.1.2"
+version = "0.1.3"
 source = "path"
 path = "../.."
 edition = "2026"
-hash = "1b6571679649b9ccb199b7f11902475d80a5e3aaf3e3ba267aca440f2b78be0e"
+hash = "bf0a0d779ac73f03d91cff71e52df785f1e9f79202567a6be8935e11b5f08296"
