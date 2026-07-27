@@ -599,7 +599,6 @@ pub fn help_text(): string {
 // as flat lines. Section headers are bold on a terminal; command summaries are dimmed.
 fn top_help_text(cmds: List<Cmd>): string {
     header = bold("Commands:")
-    mut lines: List<string> = [header]
 
     // Distinct first tokens, in first-seen order — one per command group.
     mut groups: List<string> = []
@@ -610,6 +609,11 @@ fn top_help_text(cmds: List<Cmd>): string {
         }
     }
 
+    // Build the rows first, then render: the summaries line up in one column, which needs the
+    // widest name across every row before any row can be written. (Each row carries its name twice
+    // — plain for measuring, styled for printing — because a bold group header's ANSI escapes are
+    // bytes in the string but no width on screen.)
+    mut rows: List<HelpRow> = []
     for g in groups {
         mut members: List<Cmd> = []
         for c in cmds {
@@ -622,7 +626,12 @@ fn top_help_text(cmds: List<Cmd>): string {
         // its trailing sub-path. A group root — a command named exactly the group token — rides on
         // the header line with its own summary.
         if members.len() == 1 && name_tokens(members[0].name).len() == 1 {
-            lines = lines ~ [command_line("  ", members[0].name, members[0].about)]
+            rows = rows ~ [HelpRow {
+                indent: "  ",
+                name: members[0].name,
+                styled_name: members[0].name,
+                about: members[0].about,
+            }]
         } else {
             mut root_about = ""
             for m in members {
@@ -630,15 +639,44 @@ fn top_help_text(cmds: List<Cmd>): string {
                     root_about = m.about
                 }
             }
-            lines = lines ~ [command_line("  ", bold(g), root_about)]
+            rows = rows ~ [HelpRow { indent: "  ", name: g, styled_name: bold(g), about: root_about }]
             for m in members {
                 if m.name != g {
-                    lines = lines ~ [command_line("    ", sub_path(m.name), m.about)]
+                    sub = sub_path(m.name)
+                    rows = rows ~ [HelpRow {
+                        indent: "    ",
+                        name: sub,
+                        styled_name: sub,
+                        about: m.about,
+                    }]
                 }
             }
         }
     }
+
+    // The column the summaries start in: the widest `indent + name`, plus the gutter.
+    mut width = 0
+    for r in rows {
+        w = r.indent.len() + r.name.len()
+        if w > width {
+            width = w
+        }
+    }
+    mut lines: List<string> = [header]
+    for r in rows {
+        lines = lines ~ [command_line(r, width)]
+    }
     return lines.join("\n")
+}
+
+// One row of the top-level command list, before it is rendered. `name` is the plain text (what
+// decides the column width); `styled_name` is what actually gets printed — the same text, possibly
+// wrapped in ANSI escapes that occupy no columns.
+struct HelpRow {
+    indent: string
+    name: string
+    styled_name: string
+    about: string
 }
 
 // The tokens of a nested command name after its leading group token, rejoined (e.g. `remote add` ->
@@ -654,9 +692,17 @@ fn sub_path(name: string): string {
     return rest.join(" ")
 }
 
-// One command row: the (indented) command name, and its dimmed `about` summary when present.
-fn command_line(indent: string, name: string, about: string): string {
-    return if about == "" then indent ~ name else indent ~ name ~ "    " ~ dim(about)
+// One command row: the (indented) command name, and its dimmed `about` summary when present,
+// started in the shared column `width` gives (plus a four-space gutter) so every summary lines up.
+// The pad is computed from the plain name, never the styled one — ANSI escapes are bytes, not
+// columns, and padding by the styled length is what left the list ragged.
+fn command_line(row: HelpRow, width: int): string {
+    lead = row.indent ~ row.styled_name
+    if row.about == "" {
+        return lead
+    }
+    pad = " ".repeat(width - row.indent.len() - row.name.len())
+    return lead ~ pad ~ "    " ~ dim(row.about)
 }
 
 // A single brief usage line, e.g. `usage: greet <name> [--loud]`.

@@ -168,6 +168,32 @@ os.exit(run())
         assert(!h.contains("usage:"))
     }
 
+    // Every summary starts in the same column — across flat commands, a group header, and the
+    // deeper-indented subcommands alike. The rows used to be joined to their summary by a fixed
+    // four spaces, so the column moved with each name's length and the list came out ragged.
+    fn top_help_summaries_share_a_column(): void {
+        summaries = [
+            "Add two integers",
+            "Greet someone",
+            "List remotes",
+            "Add a remote",
+            "Remove a remote",
+        ]
+        mut column = -1
+        for line in help_text().lines() {
+            for about in summaries {
+                if line.contains(about) {
+                    at = line.index_of(about) ?? -1
+                    if column == -1 {
+                        column = at
+                    }
+                    assert(at == column, "summary column moved: ${line}")
+                }
+            }
+        }
+        assert(column > 0)
+    }
+
     // Per-command `--help` is a clean exit (0).
     fn command_help_is_clean_exit(): void {
         assert(dispatch(["greet", "--help"]) == 0)
