@@ -752,7 +752,7 @@ fn command_help_text(name: string, params: List<ParamInfo>): string {
             match struct_type_name(p.type) {
                 some(sname) => {
                     for fs in field_specs_of(sname) {
-                        mut flabel = "  --${fs.name}: ${dim(type_name(fs.type))}"
+                        mut flabel = "  --${fs.name}: ${dim(type_label(fs.type))}"
                         if fs.optional {
                             flabel = flabel ~ " " ~ dim("[optional]")
                         }
@@ -775,7 +775,7 @@ fn command_help_text(name: string, params: List<ParamInfo>): string {
                 some(x) => x.env,
                 none => "",
             }
-            mut label = "  ${p.name}: ${dim(type_name(p.type))}"
+            mut label = "  ${p.name}: ${dim(type_label(p.type))}"
             if short != "" {
                 label = label ~ " " ~ dim("(-${short})")
             }
@@ -994,7 +994,7 @@ fn is_bool_type(t: Type): bool {
     }
 }
 
-fn type_name(t: Type): string {
+fn type_label(t: Type): string {
     return match t {
         Type.Int => "int",
         Type.Float => "float",
