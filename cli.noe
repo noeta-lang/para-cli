@@ -18,8 +18,6 @@
 // A consumer keys this package `para` in `[dependencies]` and imports the names it uses, e.g.
 // `use para.cli.{Command, Arg, run}`. The attribute struct must be imported by name for `#[Command]`
 // to resolve — importing the module alone is not enough. See `examples/para-cli/demo/`.
-namespace para.cli
-
 use std.io
 use std.args
 use std.env
