@@ -501,10 +501,18 @@ struct Cmd {
 fn commands(): List<Cmd> {
     mut out: List<Cmd> = []
     for c in attributes_of::<Command>() {
-        selected = if c.value.name == "" then c.target else c.value.name
+        selected = if c.value.name == "" then leaf(c.target) else c.value.name
         out = out ~ [Cmd { target: c.target, name: selected, about: c.value.about }]
     }
     return out
+}
+
+// The bare command name derived from a function's reflection key. A module path derives from
+// where its file sits, so a `#[Command]` function reflects under its full module-qualified name
+// (`dirscan.main.scan`); the command a user types is the last dotted segment (`scan`).
+fn leaf(target: string): string {
+    parts = target.split(".")
+    return parts[parts.len() - 1]
 }
 
 // The tokens of a command name, split on spaces (a single-token name yields a one-element list).
