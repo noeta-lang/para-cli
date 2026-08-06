@@ -40,6 +40,16 @@ fn serve(#[Arg(env: "PARA_CLI_PORT", help: "port to bind")] port: int = 8080): i
     return port
 }
 
+// A flag whose declaration FOLLOWS an unsupplied optional. Binding is by name, so `-n 3` reaches
+// `top` without `since` being mentioned at all — and the coercion that rejects `-n many` runs
+// whether or not the earlier parameter was given. Returns `top` as the exit code so a test can see
+// which value actually arrived.
+#[Command(about: "Report the top-N cutoff, after an optional filter")]
+fn cutoff(since: string = "", #[Arg(short: "n", help: "how many to keep")] top: int = 10): int {
+    io.outln("since=${since} top=${top}")
+    return top
+}
+
 // F3 — nested subcommands. `#[Command(name: "...")]` gives an explicit, possibly multi-token command
 // path; selection matches the LONGEST token-prefix of argv, so `remote add` wins over a bare
 // `remote`. The `remote` group has a root command; the `config` group deliberately has none, so a
@@ -93,6 +103,27 @@ os.exit(run())
     // Named can be given out of declaration order.
     fn named_out_of_order(): void {
         assert(dispatch(["add", "--b", "40", "--a", "2"]) == 42)
+    }
+
+    // A supplied flag must not depend on the parameters DECLARED BEFORE IT. Binding used to be
+    // positional and the list was truncated at the first missing optional, so `-n 3` was dropped on
+    // the floor and `cutoff` ran with its default 10 — exit 0, no diagnostic, the wrong answer.
+    fn a_flag_binds_over_an_unsupplied_earlier_optional(): void {
+        assert(dispatch(["cutoff", "-n", "3"]) == 3)
+        assert(dispatch(["cutoff", "--top", "3"]) == 3)
+        assert(dispatch(["cutoff", "--since", "monday", "-n", "3"]) == 3)
+    }
+
+    // The gap is a gap, not a zero: an unsupplied optional runs the callee's OWN default.
+    fn an_unsupplied_optional_keeps_its_declared_default(): void {
+        assert(dispatch(["cutoff"]) == 10)
+        assert(dispatch(["cutoff", "--since", "monday"]) == 10)
+    }
+
+    // And coercion still runs on that flag, which is what the truncation had been skipping: a
+    // non-numeric token is a usage error before the body does anything.
+    fn coercion_runs_on_a_flag_after_a_gap(): void {
+        assert(dispatch(["cutoff", "-n", "many"]) == 2)
     }
 
     // A bool flag via its short spelling (`#[Arg(short: "l")]`), present -> true; greet returns 0.

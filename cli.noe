@@ -130,7 +130,7 @@ fn run_command(target: string, display: string, tokens: List<string>): int {
 
 /// Invoke the command by name and translate its outcome to an exit code: an `int` return becomes the
 /// exit code, any other return is success (0), and an `Err` from the command is a runtime failure (1).
-fn do_invoke(name: string, bound: List<dyn>): int {
+fn do_invoke(name: string, bound: Map<string, dyn>): int {
     return match invoke(name, bound) {
         Ok(v) => v.as<int>() ?? 0,
         Err(e) => runtime_error(e),
@@ -334,10 +334,17 @@ fn take_positional(positional_names: List<string>, pos_index: int, t: string): R
 
 // Walk the signature in order, source each parameter's raw string from the parsed map, and coerce it
 // to the declared type. A required parameter with no source is a usage error. A *missing optional*
-// parameter stops the build: the argument list is left short, and `invoke` lets the callee fill the
-// trailing default (defaults are trailing-only, so once one optional is absent the rest are too).
-fn bind_args(params: List<ParamInfo>, sources: Map<string, string>): Result<List<dyn>, string> {
-    mut bound: List<dyn> = []
+// parameter is simply left out of the map: `invoke`'s named form masks the gap and the callee runs
+// its own default for that one.
+//
+// Binding by NAME rather than by position is what makes a flag independent of the parameters before
+// it. A positional list can only ever be truncated at the first gap, so `authors -n 3` — a supplied
+// flag whose declaration follows an unsupplied one — had to either drop `-n` or invent a value for
+// `since`. It dropped it, silently, and the coercion that would have rejected `-n many` never ran.
+// A CLI's whole promise is that the signature is the spec; a flag that parses and then evaporates
+// breaks it in the one direction nobody tests for.
+fn bind_args(params: List<ParamInfo>, sources: Map<string, string>): Result<Map<string, dyn>, string> {
+    mut bound: Map<string, dyn> = {}
     for p in params {
         // A struct-typed parameter (F5) is built from its own `--field` flags and passed as one
         // argument. It always produces a value (missing optional fields fall to the struct's own
@@ -347,7 +354,7 @@ fn bind_args(params: List<ParamInfo>, sources: Map<string, string>): Result<List
             some(sname) => {
                 match build_struct_arg(sname, sources) {
                     Ok(v) => {
-                        bound = bound ~ [v]
+                        bound[p.name] = v
                     },
                     Err(e) => {
                         return Err(e)
@@ -359,7 +366,7 @@ fn bind_args(params: List<ParamInfo>, sources: Map<string, string>): Result<List
                     some(raw) => {
                         match coerce(p.type, raw) {
                             Ok(v) => {
-                                bound = bound ~ [v]
+                                bound[p.name] = v
                             },
                             Err(e) => {
                                 return Err(e)
@@ -370,10 +377,9 @@ fn bind_args(params: List<ParamInfo>, sources: Map<string, string>): Result<List
                         if !p.optional {
                             return Err("missing required argument '${p.name}'")
                         }
-                        return Ok(bound)
                     },
-                    // A missing optional stops the build: leave the list short so the callee fills the
-                    // trailing default (defaults are trailing-only, so the rest are optional too).
+                    // A missing optional contributes no entry, and the named call masks it — so a
+                    // LATER parameter that WAS supplied still reaches the callee.
                 }
             },
         }
