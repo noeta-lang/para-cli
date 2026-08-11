@@ -18,9 +18,15 @@ Plus the framework behavior that rides on those: derived `--help` (colorized on 
 
 ## Installation
 
+```sh
+noeta add para/cli
+```
+
+That asks the registry for the current release and writes the caret requirement for it, so no version is pinned here to go stale. It adds:
+
 ```toml
 [dependencies]
-para = { version = "^0.3", package = "para/cli" }
+para = { version = "^X.Y", package = "para/cli" }
 ```
 
 The package is keyed `para`, so its module addresses as `para.cli`. It is pure Noeta — no `[trust]` entry needed.
