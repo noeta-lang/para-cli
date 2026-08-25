@@ -1,0 +1,47 @@
+// A DELIBERATELY misconfigured program: two commands both declare `#[Command(default: true)]`.
+//
+// It exists to pin the diagnostic. Which of the two would run depends on the order whole-program
+// reflection reports attributes in, so `dispatch` refuses rather than picking one — and it refuses
+// on every argv, including the help paths, because the program itself is what is wrong.
+//
+// Running it is expected to fail:
+//
+//   noeta run main.noe --        # error: more than one default command: scan, sweep   (exit 2)
+use para.cli.{Command, run, dispatch}
+use std.io
+use std.os
+
+#[Command(about: "Scan a path", default: true)]
+fn scan(path: string = "."): int {
+    io.outln("scanning ${path}")
+    return 0
+}
+
+#[Command(about: "Sweep a path", default: true)]
+fn sweep(path: string = "."): int {
+    io.outln("sweeping ${path}")
+    return 0
+}
+
+os.exit(run())
+
+@test {
+    // An empty argv would have run "the" default; with two declared there is no such thing.
+    fn two_defaults_is_a_usage_error(): void {
+        assert(dispatch([]) == 2)
+    }
+
+    // The refusal does not depend on what was typed: naming one of them explicitly is still a
+    // refusal, because the program is misconfigured whatever this particular argv asked for.
+    fn the_refusal_covers_every_argv(): void {
+        assert(dispatch(["scan"]) == 2)
+        assert(dispatch(["sweep", "/tmp"]) == 2)
+        assert(dispatch(["--help"]) == 2)
+    }
+
+    // Completion generation is the one thing that still works: it is pure string generation from the
+    // command model and never has to choose a command to run.
+    fn completions_still_generate(): void {
+        assert(dispatch(["--completions", "bash"]) == 0)
+    }
+}

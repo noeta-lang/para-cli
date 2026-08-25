@@ -13,7 +13,7 @@ Guidance for coding agents working in this repo — the standalone repo of the *
 - `noeta test` never runs top-level statements, so an example's `os.exit(run())` entry line is inert under test.
 - Test through `dispatch(argv)` — the synthetic-argv core — never by spawning the program. `help_text()` exists for the same reason: it is the `pub` seam for asserting on help output.
 - A `@test` block is white-box over **its own** package only, so an example's tests reach para/cli's `pub` surface and nothing else — importing a private helper is E0019. Widen the `pub` surface deliberately, never just to make a test compile.
-- Land new behavior with cases in the example that exercises that mode: `demo/` multi-command and nested command paths, `single/` single-command mode, `struct-args/` struct-typed parameters.
+- Land new behavior with cases in the example that exercises that mode: `demo/` multi-command and nested command paths plus typed exit codes, `single/` single-command mode, `default/` a default command, `two-defaults/` the two-defaults diagnostic (a deliberately misconfigured program — every dispatch in it is expected to exit 2), `struct-args/` struct-typed parameters.
 - Run `noeta fmt` before committing. The tree is canonically formatted today and CI does **not** check formatting, so drift would go unnoticed.
 
 ## Conventions

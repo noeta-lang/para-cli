@@ -8,13 +8,15 @@ One pure-Noeta module, `para.cli`:
 
 | symbol | kind | purpose |
 | --- | --- | --- |
-| `Command { about = "", name = "" }` | `@attribute(Function, Method)` | marks an invokable command; `name` overrides the derived name and MAY contain spaces (a nested path) |
+| `Command { about = "", name = "", default = false }` | `@attribute(Function, Method)` | marks an invokable command; `name` overrides the derived name and MAY contain spaces (a nested path); `default` marks the command a bare invocation runs |
 | `Arg { help = "", short = "", long = "", env = "" }` | `@attribute(Param)` | per-parameter help, flag spellings, and an environment-variable fallback |
+| `ExitCode` | `enum: int` | the conventional exit codes as a type — `Ok`/`Failure`/`Usage` plus the `sysexits.h` range; the backing value IS the process code |
+| `ExitStatus` | trait | `code(): int` — what a command may return instead of an `int`, so a consumer's own result type can state its own exit code |
 | `run(): int` | fn | dispatch the real `argv` (minus argv0), return the exit code |
 | `dispatch(argv: List<string>): int` | fn | the testable core: dispatch a synthetic argv |
 | `help_text(): string` | fn | the top-level `--help` text exactly as `dispatch` prints it — a testable seam for asserting on help output |
 
-Plus the framework behavior that rides on those: derived `--help` (colorized on a TTY), nested subcommands, env-var fallbacks, and `--completions <bash|zsh|fish>` shell-completion scripts.
+Plus the framework behavior that rides on those: derived `--help` (colorized on a TTY), nested subcommands, a default command, env-var fallbacks, and `--completions <bash|zsh|fish>` shell-completion scripts.
 
 ## Installation
 
@@ -80,6 +82,65 @@ fn serve(#[Arg(env: "PORT", help: "port to bind")] port: int = 8080): int { ... 
 
 `#[Command(name: "remote add")]` gives a command a multi-token path. Selection matches the **longest** command-name token-prefix of `argv`, so `remote add …` beats a bare `remote`. Top-level `--help` groups shared first-tokens hierarchically. A partial path with no matching command (e.g. a bare `config` when only `config set`/`config get` exist) is a usage error (exit 2) that lists the valid continuations.
 
+### A default command
+
+`#[Command(default: true)]` names the command that runs when `argv` names no command at all — an empty `argv`, or a first token that is no command's name. A token that IS a command name always selects that command, so a default can never shadow one, and the top-level listing marks which command a bare invocation runs.
+
+```noeta
+#[Command(about: "Scan a path", default: true)]
+fn scan(path: string = "."): int { ... }
+
+#[Command(about: "Print the version")]
+fn version(): int { ... }
+//  myprog                    # scan .      (empty argv)
+//  myprog /tmp               # scan /tmp   ("/tmp" names no command, so it is scan's argument)
+//  myprog scan /tmp          # scan /tmp   (naming it explicitly still works)
+//  myprog version            # version     (a command name wins)
+```
+
+> [!NOTE]
+> The cost of a default is that a mistyped command name becomes an argument: `myprog verzion` runs `scan` with `path = "verzion"` rather than reporting an unknown command. Declare a default when the program has one obvious job and the subcommands are secondary; leave it off when every invocation should name a verb.
+
+At most one command may declare `default: true`. Two is a usage error naming both, reported on every `argv` before anything runs, since which one ran would otherwise depend on the order reflection reports attributes in.
+
+`--help` still prints the top-level listing rather than running the default, so a program with a default stays discoverable; the default's own usage is one token away (`myprog scan --help`).
+
+### Typed exit codes
+
+A command may return an `int`, or any value whose type implements `ExitStatus`. `ExitCode` is the framework's own implementation of it: an `int`-backed enum of the conventional codes, where the backing value *is* the process exit code.
+
+```noeta
+use para.cli.{Command, ExitCode, ExitStatus, run}
+
+#[Command(about: "Load the configuration")]
+fn load(path: string): ExitCode {
+    if !exists(path) {
+        return ExitCode.NoInput        // exit 66
+    }
+    return ExitCode.Ok                 // exit 0
+}
+```
+
+`ExitCode` carries `Ok` (0), `Failure` (1) and `Usage` (2) — the codes the framework itself returns — plus the BSD `sysexits.h` range: `DataError` (65), `NoInput` (66), `NoUser` (67), `NoHost` (68), `Unavailable` (69), `Software` (70), `OsError` (71), `OsFile` (72), `CantCreate` (73), `IoError` (74), `TempFail` (75), `Protocol` (76), `NoPermission` (77), `Config` (78). Because the backing is the code, `ExitCode.try_from(66)` recovers the case from a number read off a log or a supervisor's report.
+
+A result type of your own reports its code the same way — implement `ExitStatus` and return it:
+
+```noeta
+struct Report {
+    failures: int
+
+    impl ExitStatus {
+        pub fn code(): int { return if self.failures == 0 then 0 else 1 }
+    }
+}
+
+#[Command(about: "Audit the tree")]
+fn audit(): Report { ... }
+```
+
+> [!NOTE]
+> `int` is accepted through a separate check rather than through the trait, because a primitive carries no nominal type and so implements no declared trait — `42 is dyn ExitStatus` is `false` however the trait is written. Both spellings arrive at the same door, and returning an `int` is unchanged.
+
 ### Struct-typed parameters
 
 A parameter declared with a struct type is bound not as one positional but by expanding its **fields** into flags: each field becomes a `--field` long flag (a bool field is a presence-flag), and struct fields are never positional. Supplied fields are coerced to their declared field types; omitted defaulted fields are filled by the struct's own defaults — including a *middle* one, which a positional list could not express. A missing non-defaulted field is a usage error (exit 2).
@@ -129,19 +190,21 @@ $ myprog --completions fish > ~/.config/fish/completions/myprog.fish
 
 ## Behavior
 
-- **Command selection.** With several commands, the first non-flag token picks the subcommand; with exactly one command, there is no subcommand token — every argv token is that command's argument.
+- **Command selection.** With several commands, the first non-flag token picks the subcommand; with exactly one command, there is no subcommand token — every argv token is that command's argument. A `#[Command(default: true)]` command runs when no command name matches (an empty argv, or a first token no command answers to), taking the whole argv as its own arguments.
 - **Argument forms.** `--long value`, `--long=value`, `-s value`, `-s=value`; a `bool` parameter is a flag (`--flag` presence, `--flag=false`, or `--no-flag`); `--` ends option parsing; remaining bare tokens fill the non-bool parameters in declaration order. A parameter's long spelling defaults to its name (`#[Arg(long: ...)]` overrides it); it has no short unless `#[Arg(short: ...)]` declares one. Named arguments may come in any order.
 - **Coercion.** `int` via `to_int`, `float` via `to_float`, `bool` via `true`/`1`/`false`/`0`; any other type receives the raw string.
 - **Optional parameters.** A parameter with a default may be omitted; the argument list is left short and the callee fills its own default. Defaults are trailing-only, so once one optional is absent the rest are too.
 - **Help.** `--help`/`-h` as the first token (or an empty argv, in multi-command mode) prints the top-level help; after a command name — anywhere before a `--` — it prints that command's usage. Top-level help matches how the parser dispatches: multi-command mode lists the commands, while single-command mode prints the lone command's own usage under the program's name — no `Commands:` section, because there is no subcommand token to type. Per-command help lists each parameter with its type and its `(-s)` / `[optional]` / `[env: NAME]` annotations; a struct-typed parameter is shown as its fields' `--flag`s, exactly as the parser accepts them.
-- **Return values.** An `int` return becomes the exit code; any other return value is success (`0`); an `Err` returned by the command is a runtime failure (`1`).
+- **Return values.** An `int` return becomes the exit code, as does the `code()` of any `ExitStatus` value (`ExitCode` included); any other return value is success (`0`); an `Err` returned by the command is a runtime failure (`1`).
 - **Error output.** Every failure prints `error: <message>` to stderr. A usage error follows it with the command's usage line; a command-selection error follows it with the top-level help.
-- **Exit codes.** `0` success (or `--help`), `1` the command returned an `Err`, `2` a usage error (unknown command/option, missing required argument, bad coercion, too many positionals).
+- **Exit codes.** `0` success (or `--help`), `1` the command returned an `Err`, `2` a usage error (unknown command/option, missing required argument, bad coercion, too many positionals, more than one default command). They are `ExitCode.Ok`, `ExitCode.Failure` and `ExitCode.Usage`.
 
 ## Examples
 
-- [`examples/demo/`](examples/demo) — multi-command mode, nested subcommands.
+- [`examples/demo/`](examples/demo) — multi-command mode, nested subcommands, typed exit codes.
 - [`examples/single/`](examples/single) — single-command mode (no subcommand token).
+- [`examples/default/`](examples/default) — a default command.
+- [`examples/two-defaults/`](examples/two-defaults) — a deliberately misconfigured program, pinning the two-defaults diagnostic.
 - [`examples/struct-args/`](examples/struct-args) — struct-typed arguments.
 
 ## Requirements
