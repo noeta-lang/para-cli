@@ -7,7 +7,7 @@
 //
 // The tests exploit that a command's `int` return becomes the exit code, so the arithmetic commands
 // are self-verifying with no output to capture: `dispatch(["add","2","3"])` is literally `2 + 3`.
-use para.cli.{Command, Arg, run, dispatch, help_text}
+use para.cli.{Command, Arg, run, dispatch, help_text, ExitCode, ExitStatus}
 use std.io
 use std.os
 use std.env
@@ -82,6 +82,38 @@ fn config_set(key: string, value: string): int {
 fn config_get(key: string): int {
     io.outln(key)
     return 0
+}
+
+// A command may return a typed exit code instead of a bare `int`. `ExitCode`'s backing value IS the
+// process code, so `bail` exits 78 (`sysexits.h` EX_CONFIG) without that number appearing here.
+#[Command(about: "Fail with a typed configuration-error code")]
+fn bail(): ExitCode {
+    io.errln("error: nothing configured")
+    return ExitCode.Config
+}
+
+// A result type of the consumer's own reports its code the same way: any `ExitStatus` implementor is
+// accepted at the same door an `int` is, so the framework never has to know this type exists.
+struct Report {
+    failures: int
+
+    impl ExitStatus {
+        pub fn code(): int {
+            return if self.failures == 0 then 0 else 1
+        }
+    }
+}
+
+#[Command(about: "Audit something, reporting failures through a custom ExitStatus type")]
+fn audit(failures: int = 0): Report {
+    io.outln("audited: ${failures} failure(s)")
+    return Report { failures: failures }
+}
+
+// A command that returns nothing at all is a success — there is no value to read a code from.
+#[Command(about: "Do a thing that has no result")]
+fn touch(): void {
+    io.outln("touched")
 }
 
 // Real entry point: parse the actual argv, dispatch, and make the command's return the process exit
@@ -319,5 +351,60 @@ os.exit(run())
     }
     fn completions_missing_shell(): void {
         assert(dispatch(["--completions"]) == 2)
+    }
+
+    // ---- Typed exit codes ----------------------------------------------------
+
+    // A command returning `ExitCode` exits with that case's backing value. Before typed returns
+    // existed, anything that was not an `int` fell through to 0, so a failure like this one reported
+    // success.
+    fn typed_exit_code_is_the_backing_value(): void {
+        assert(dispatch(["bail"]) == 78)
+        assert(dispatch(["bail"]) == ExitCode.Config.code())
+    }
+
+    // A consumer's own `ExitStatus` type is read the same way, through the trait rather than through
+    // any knowledge of the type.
+    fn a_custom_exit_status_type_reports_its_code(): void {
+        assert(dispatch(["audit"]) == 0)
+        assert(dispatch(["audit", "3"]) == 1)
+    }
+
+    // A `void` command has no value to read a code from, so it succeeds.
+    fn a_void_command_is_success(): void {
+        assert(dispatch(["touch"]) == 0)
+    }
+
+    // The framework's own codes and the enum's cases are the same numbers, checked against real
+    // dispatches rather than against a second copy of the table.
+    fn the_enum_agrees_with_what_dispatch_returns(): void {
+        assert(dispatch(["add", "0", "0"]) == ExitCode.Ok.code())
+        assert(dispatch(["nope"]) == ExitCode.Usage.code())
+    }
+
+    // The drift guard for the one thing written twice: each case declares a backing AND `code()`
+    // returns a literal. Every declared backing must select a case whose `code()` is that same
+    // number, so a typo in either half fails here rather than in someone's shell script.
+    fn every_backing_round_trips_through_its_code(): void {
+        mut checked = 0
+        for v in variants_of::<ExitCode>() {
+            match v.backing {
+                some(b) => {
+                    match ExitCode.try_from(b) {
+                        some(c) => {
+                            assert(c.code() == b, "ExitCode.${v.name}: backing ${b} != code ${c.code()}")
+                            checked = checked + 1
+                        },
+                        none => {
+                            assert(false, "ExitCode.${v.name}: backing ${b} selects no case")
+                        },
+                    }
+                },
+                none => {
+                    assert(false, "ExitCode.${v.name} has no backing value")
+                },
+            }
+        }
+        assert(checked == variants_of::<ExitCode>().len())
     }
 }

@@ -1,0 +1,6 @@
+[package]
+name = "noeta/cli_default"
+version = "0.1.0"
+
+[dependencies]
+para = { path = "../.." }

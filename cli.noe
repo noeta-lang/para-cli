@@ -28,10 +28,16 @@ use std.env
 /// `name` overrides the command name derived from the function name; it MAY contain spaces to
 /// define a nested path (e.g. `#[Command(name: "remote add")]`), and command selection matches the
 /// longest command-name token-prefix of `argv`.
+///
+/// `default: true` marks the command that runs when `argv` names no command — an empty `argv`, or a
+/// first token that is no command's name. A token that IS a command name always selects that
+/// command, so a default can never shadow one. At most one command may declare it; two is a usage
+/// error naming both, since which one runs would otherwise depend on reflection order.
 @attribute(Function, Method)
 pub struct Command {
     about: string = ""
     name: string = ""
+    default: bool = false
 }
 
 /// Per-parameter metadata: `help` text for `--help`, optional `short`/`long` spellings that override
@@ -44,6 +50,70 @@ pub struct Arg {
     short: string = ""
     long: string = ""
     env: string = ""
+}
+
+/// What a command may return instead of a bare `int`: any type that can state its own process exit
+/// code. `ExitCode` below implements it, and so may a consumer's own result type — a command
+/// returning one reports its code, exactly as an `int` return does.
+///
+/// The framework keeps a separate `int` arm rather than implementing this for `int`, because a
+/// primitive carries no nominal type and so implements no declared trait (`42 is dyn ExitStatus` is
+/// `false` however the trait is written). Both spellings are accepted at the same door; see
+/// `exit_code_of`.
+pub trait ExitStatus {
+    fn code(): int
+}
+
+/// The conventional process exit codes, as a type. `0`, `1` and `2` are the framework's own — the
+/// codes `dispatch` returns for success, a command's `Err`, and a usage failure — and the rest are
+/// the BSD `sysexits.h` range that shell scripts and service supervisors already read.
+///
+/// The backing value IS the exit code, so `ExitCode.try_from(65)` recovers the case from a code read
+/// off a wire or a log. `code()` is what a command returns through, and the two are pinned together
+/// by a test rather than by hand: every declared backing must round-trip through `try_from` into a
+/// case whose `code()` is that same number.
+pub enum ExitCode: int {
+    Ok = 0
+    Failure = 1
+    Usage = 2
+    DataError = 65
+    NoInput = 66
+    NoUser = 67
+    NoHost = 68
+    Unavailable = 69
+    Software = 70
+    OsError = 71
+    OsFile = 72
+    CantCreate = 73
+    IoError = 74
+    TempFail = 75
+    Protocol = 76
+    NoPermission = 77
+    Config = 78
+
+    impl ExitStatus {
+        pub fn code(): int {
+            return match self {
+                ExitCode.Ok => 0,
+                ExitCode.Failure => 1,
+                ExitCode.Usage => 2,
+                ExitCode.DataError => 65,
+                ExitCode.NoInput => 66,
+                ExitCode.NoUser => 67,
+                ExitCode.NoHost => 68,
+                ExitCode.Unavailable => 69,
+                ExitCode.Software => 70,
+                ExitCode.OsError => 71,
+                ExitCode.OsFile => 72,
+                ExitCode.CantCreate => 73,
+                ExitCode.IoError => 74,
+                ExitCode.TempFail => 75,
+                ExitCode.Protocol => 76,
+                ExitCode.NoPermission => 77,
+                ExitCode.Config => 78,
+            }
+        }
+    }
 }
 
 /// Discover the program's `#[Command]` functions, parse the real `argv`, dispatch, and return the
@@ -71,11 +141,25 @@ pub fn dispatch(argv: List<string>): int {
         return run_completions(cmds, argv.slice(1, argv.len()))
     }
 
-    // Top-level help: `--help`/`-h` as the first token, or (multi-command) an empty argv. What it
-    // prints matches how the parser dispatches: multi-command mode lists the commands; single-command
-    // mode renders the lone command's own usage, because a `Commands:` listing would advertise a
-    // subcommand token the parser never expects.
-    if argv.len() > 0 && is_help(argv[0]) || !single && argv.len() == 0 {
+    // The `#[Command(default: true)]` command, if the program declares one. Two is a usage error:
+    // which one ran would otherwise depend on the order reflection happens to report attributes in.
+    mut fallback: ?Cmd = none
+    match default_command(cmds) {
+        Ok(d) => {
+            fallback = d
+        },
+        Err(msg) => {
+            io.errln("error: ${msg}")
+            return 2
+        },
+    }
+
+    // Top-level help: `--help`/`-h` as the first token, or (multi-command) an empty argv with no
+    // default command to run instead. What it prints matches how the parser dispatches:
+    // multi-command mode lists the commands; single-command mode renders the lone command's own
+    // usage, because a `Commands:` listing would advertise a subcommand token the parser never
+    // expects.
+    if argv.len() > 0 && is_help(argv[0]) || !single && argv.len() == 0 && fallback == none {
         io.outln(help_text())
         return 0
     }
@@ -87,10 +171,33 @@ pub fn dispatch(argv: List<string>): int {
         return run_command(cmds[0].target, program_name(), argv)
     }
     // Multi-command mode: the longest command-name token-prefix of `argv` selects the subcommand.
+    // Failing that, a declared default command takes the whole argv as its own arguments — so a
+    // token that names a command always wins, and only what no command answers to reaches the
+    // default.
     return match select_command(cmds, argv) {
         Ok(sel) => run_command(sel.cmd.target, sel.cmd.name, sel.tokens),
-        Err(msg) => selection_error(cmds, msg),
+        Err(msg) => match fallback {
+            some(d) => run_command(d.target, d.name, argv),
+            none => selection_error(cmds, msg),
+        },
     }
+}
+
+// The one command marked `#[Command(default: true)]`, or `none`. More than one is an error naming
+// them, reported before anything runs rather than resolved in someone's favor.
+fn default_command(cmds: List<Cmd>): Result<?Cmd, string> {
+    mut found: ?Cmd = none
+    mut names: List<string> = []
+    for c in cmds {
+        if c.is_default {
+            names = names ~ [c.name]
+            found = some(c)
+        }
+    }
+    if names.len() > 1 {
+        return Err("more than one default command: ${names.join(", ")}")
+    }
+    return Ok(found)
 }
 
 // Report a command-selection failure: the message, then the top-level help, then exit code 2.
@@ -128,13 +235,30 @@ fn run_command(target: string, display: string, tokens: List<string>): int {
     }
 }
 
-/// Invoke the command by name and translate its outcome to an exit code: an `int` return becomes the
-/// exit code, any other return is success (0), and an `Err` from the command is a runtime failure (1).
+/// Invoke the command by name and translate its outcome to an exit code. An `Err` from the command
+/// is a runtime failure (1); everything else goes through `exit_code_of`.
 fn do_invoke(name: string, bound: Map<string, dyn>): int {
     return match invoke(name, bound) {
-        Ok(v) => v.as<int>() ?? 0,
+        Ok(v) => exit_code_of(v),
         Err(e) => runtime_error(e),
     }
+}
+
+// A command's return value as a process exit code: an `int` is the code as written, a value of any
+// `ExitStatus` type (`ExitCode` included) reports its own, and any other return — a `void` command,
+// or one returning a value that says nothing about success — is 0.
+//
+// The two arms are the whole reason `ExitStatus` exists rather than a conversion trait: `int` is a
+// primitive, so it carries no nominal type and can implement no declared trait, which leaves a head
+// test as the only way to read it.
+fn exit_code_of(v: dyn): int {
+    if v is int {
+        return v
+    }
+    if v is dyn ExitStatus {
+        return v.code()
+    }
+    return 0
 }
 
 fn runtime_error(e: string): int {
@@ -502,13 +626,19 @@ struct Cmd {
     target: string
     name: string
     about: string
+    is_default: bool
 }
 
 fn commands(): List<Cmd> {
     mut out: List<Cmd> = []
     for c in attributes_of::<Command>() {
         selected = if c.value.name == "" then leaf(c.target) else c.value.name
-        out = out ~ [Cmd { target: c.target, name: selected, about: c.value.about }]
+        out = out ~ [Cmd {
+            target: c.target,
+            name: selected,
+            about: c.value.about,
+            is_default: c.value.default,
+        }]
     }
     return out
 }
@@ -642,13 +772,13 @@ fn top_help_text(cmds: List<Cmd>): string {
                 indent: "  ",
                 name: members[0].name,
                 styled_name: members[0].name,
-                about: members[0].about,
+                about: summary(members[0]),
             }]
         } else {
             mut root_about = ""
             for m in members {
                 if m.name == g {
-                    root_about = m.about
+                    root_about = summary(m)
                 }
             }
             rows = rows ~ [HelpRow { indent: "  ", name: g, styled_name: bold(g), about: root_about }]
@@ -659,7 +789,7 @@ fn top_help_text(cmds: List<Cmd>): string {
                         indent: "    ",
                         name: sub,
                         styled_name: sub,
-                        about: m.about,
+                        about: summary(m),
                     }]
                 }
             }
@@ -679,6 +809,19 @@ fn top_help_text(cmds: List<Cmd>): string {
         lines = lines ~ [command_line(r, width)]
     }
     return lines.join("\n")
+}
+
+// A command's summary column in the top-level listing: its `about`, with the default command marked
+// so a reader can see which one a bare invocation runs. The marker goes in the summary rather than
+// beside the name because the name column is what the summaries align against.
+fn summary(c: Cmd): string {
+    if !c.is_default {
+        return c.about
+    }
+    if c.about == "" {
+        return dim("[default]")
+    }
+    return "${c.about} ${dim("[default]")}"
 }
 
 // One row of the top-level command list, before it is rendered. `name` is the plain text (what

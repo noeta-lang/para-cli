@@ -1,0 +1,106 @@
+// A multi-command program with a DEFAULT command: `#[Command(default: true)]` names the one that
+// runs when argv names no command at all.
+//
+//   noeta run main.noe --                 # scan .        (empty argv -> the default)
+//   noeta run main.noe -- /tmp            # scan /tmp     (an unknown token -> the default's argument)
+//   noeta run main.noe -- scan /tmp       # scan /tmp     (naming it explicitly still works)
+//   noeta run main.noe -- version         # version       (a real command name always wins)
+//
+// `scan` returns the path's length as its exit code, so a test can see WHICH argument reached it
+// without capturing any output.
+use para.cli.{Command, Arg, run, dispatch, help_text, ExitCode}
+use std.io
+use std.os
+
+#[Command(about: "Scan a path", default: true)]
+fn scan(path: string = ".", #[Arg(short: "n", help: "how many entries to show")] top: int = 5): int {
+    io.outln("scanning ${path} (top ${top})")
+    return path.len()
+}
+
+#[Command(about: "Print the version")]
+fn version(): int {
+    io.outln("0.1.0")
+    return 0
+}
+
+#[Command(about: "Fail on purpose, with a typed code")]
+fn fail(): ExitCode {
+    return ExitCode.Unavailable
+}
+
+// Real entry: `noeta test` never runs top-level statements, so this line is inert under test.
+os.exit(run())
+
+@test {
+    // An empty argv runs the default rather than printing help — the whole point of declaring one.
+    // `scan` returns `path.len()`, and its default path is ".", so 1 proves the body ran with the
+    // parameter's own default.
+    fn empty_argv_runs_the_default(): void {
+        assert(dispatch([]) == 1)
+    }
+
+    // A first token that names no command is the default's first argument, not an error. "/tmp" is
+    // four characters, so the exit code shows the token really bound to `path`.
+    fn an_unclaimed_token_becomes_the_defaults_argument(): void {
+        assert(dispatch(["/tmp"]) == 4)
+    }
+
+    // Naming the default explicitly is unchanged — it is an ordinary command as well as the default.
+    fn the_default_is_still_selectable_by_name(): void {
+        assert(dispatch(["scan", "/tmp"]) == 4)
+    }
+
+    // A token that IS a command name always selects that command, so the default can never shadow
+    // one. `version` returns 0 while `scan "version"` would return 7.
+    fn a_command_name_wins_over_the_default(): void {
+        assert(dispatch(["version"]) == 0)
+    }
+
+    // Flags reach the default the same way positionals do, with coercion intact: `-n 3` binds, and
+    // `-n many` is a usage error before the body runs.
+    fn flags_reach_the_default(): void {
+        assert(dispatch(["-n", "3"]) == 1)
+        assert(dispatch(["-n", "many"]) == 2)
+    }
+
+    // Too many arguments for the default is the default's own usage error (2), reported against the
+    // command it actually tried to run.
+    fn a_bad_call_reports_the_defaults_usage(): void {
+        assert(dispatch(["a", "1", "extra"]) == 2)
+    }
+
+    // `--help` still prints the top-level listing rather than running the default, so a program with
+    // a default is still discoverable. The default's own help is one token away (`scan --help`).
+    fn help_still_lists_the_commands(): void {
+        assert(dispatch(["--help"]) == 0)
+        h = help_text()
+        assert(h.starts_with("Commands:"))
+        assert(h.contains("scan"))
+        assert(h.contains("version"))
+    }
+
+    // The listing marks which command a bare invocation runs. Under `noeta test` stdout is not a
+    // terminal, so the marker is plain text here and carries no ANSI escapes.
+    fn help_marks_the_default(): void {
+        mut marked = ""
+        for line in help_text().lines() {
+            if line.contains("[default]") {
+                marked = line
+            }
+        }
+        assert(marked.contains("scan"), "the default command is not marked in the listing")
+        assert(!marked.contains("version"))
+    }
+
+    // Per-command help for the default still works through its name.
+    fn the_defaults_own_help(): void {
+        assert(dispatch(["scan", "--help"]) == 0)
+    }
+
+    // A typed `ExitCode` return travels through the default-command path too.
+    fn a_typed_code_from_a_named_command(): void {
+        assert(dispatch(["fail"]) == 69)
+        assert(dispatch(["fail"]) == ExitCode.Unavailable.code())
+    }
+}
