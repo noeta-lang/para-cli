@@ -1,5 +1,5 @@
 [package]
-name = "noeta/cli_two_defaults"
+name = "local/cli_two_defaults"
 version = "0.1.0"
 
 [dependencies]

@@ -1,5 +1,5 @@
 [package]
-name = "noeta/cli_struct_args"
+name = "local/cli_struct_args"
 version = "0.1.0"
 
 [dependencies]
